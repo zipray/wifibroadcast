@@ -96,6 +96,7 @@ public:
         count_all += 1;
     }
 
+    int wlan_idx;
     int32_t count_all;
     int32_t rssi_sum;
     int8_t rssi_min;
@@ -154,3 +155,80 @@ private:
     int fd;
     pcap_t *ppcap;
 };
+
+#define	MAX_PENUMBRA_INTERFACES 8
+
+typedef struct {
+	uint32_t received_packet_cnt;
+	uint32_t wrong_crc_cnt;
+	int8_t current_signal_dbm;
+	int8_t type; // 0 = Atheros, 1 = Ralink
+	int signal_good;
+} wifi_adapter_rx_status_t;
+
+typedef struct {
+	time_t last_update;
+	uint32_t received_block_cnt;
+	uint32_t damaged_block_cnt;
+	uint32_t lost_packet_cnt;
+	uint32_t received_packet_cnt;
+	uint32_t lost_per_block_cnt;
+	uint32_t tx_restart_cnt;
+	uint32_t kbitrate;
+	uint32_t wifi_adapter_cnt;
+	wifi_adapter_rx_status_t adapter[MAX_PENUMBRA_INTERFACES];
+} wifibroadcast_rx_status_t;
+
+bool video_rssi_enabled = false;
+
+
+void status_memory_init(wifibroadcast_rx_status_t *s) {
+	s->received_block_cnt = 0;
+	s->damaged_block_cnt = 0;
+	s->received_packet_cnt = 0;
+	s->lost_packet_cnt = 0;
+	s->tx_restart_cnt = 0;
+	s->wifi_adapter_cnt = 0;
+	s->kbitrate = 0;
+
+	int i;
+	for(i=0; i<MAX_PENUMBRA_INTERFACES; ++i) {
+		s->adapter[i].received_packet_cnt = 0;
+		s->adapter[i].wrong_crc_cnt = 0;
+		s->adapter[i].current_signal_dbm = -126;
+		s->adapter[i].type = 2; // set to 2 to see if it didnt get set later ...
+	}
+}
+
+
+wifibroadcast_rx_status_t *status_memory_open(void) {
+	char buf[128];
+	int fd;
+	
+	sprintf(buf, "/wifibroadcast_rx_status_%d", 0);
+///	fd = shm_open(buf, O_RDWR, S_IRUSR | S_IWUSR);
+	fd = shm_open(buf, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+
+	if(fd < 0) {
+		perror("shm_open");
+		exit(1);
+	}
+
+	if (ftruncate(fd, sizeof(wifibroadcast_rx_status_t)) == -1) {
+		perror("ftruncate");
+		exit(1);
+	}
+
+	void *retval = mmap(NULL, sizeof(wifibroadcast_rx_status_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (retval == MAP_FAILED) {
+		perror("mmap");
+		exit(1);
+	}
+	
+	wifibroadcast_rx_status_t *tretval = (wifibroadcast_rx_status_t*)retval;
+	status_memory_init(tretval);
+	
+	return tretval;
+}
+
+wifibroadcast_rx_status_t *rx_status = NULL;
