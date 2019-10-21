@@ -39,6 +39,7 @@ extern "C"
 
 #include "wifibroadcast.hpp"
 #include "tx.hpp"
+int IsRTS;
 
 Transmitter::Transmitter(int k, int n, const string &keypair):  fec_k(k), fec_n(n), block_idx(0),
                                                                 fragment_idx(0),
@@ -120,19 +121,43 @@ void PcapTransmitter::inject_packet(const uint8_t *buf, size_t size)
     uint8_t *p = txbuf;
 
     assert(size <= MAX_FORWARDER_PACKET_SIZE);
-
     // radiotap header
     memcpy(p, radiotap_header, sizeof(radiotap_header));
     p += sizeof(radiotap_header);
-
+	
     // ieee80211 header
-    memcpy(p, ieee80211_header, sizeof(ieee80211_header));
+    if(IsRTS == 0)
+    {
+    	memcpy(p, ieee80211_header, sizeof(ieee80211_header));
+    }
+	if(IsRTS == 1)
+    {
+    	memcpy(p, ieee80211_header_data, sizeof(ieee80211_header_data));
+    }
+    if(IsRTS == 2)
+    {
+        memcpy(p, ieee80211_header_rts, sizeof(ieee80211_header_rts));
+    }
+  
     p[SRC_MAC_LASTBYTE] = radio_port;
     p[DST_MAC_LASTBYTE] = radio_port;
     p[FRAME_SEQ_LB] = ieee80211_seq & 0xff;
     p[FRAME_SEQ_HB] = (ieee80211_seq >> 8) & 0xff;
     ieee80211_seq += 16;
-    p += sizeof(ieee80211_header);
+  
+   
+    if(IsRTS == 0)
+    {
+	      p += sizeof(ieee80211_header);
+    }
+	if(IsRTS == 1)
+    {
+	      p += sizeof(ieee80211_header_data);
+    }
+    if(IsRTS == 2)
+    {
+	      p += sizeof(ieee80211_header_rts);
+    }
 
     // FEC data
     memcpy(p, buf, size);
@@ -287,11 +312,12 @@ int main(int argc, char * const *argv)
     int short_gi = 0;
     int stbc = 0;
     int ldpc = 0;
-    int mcs_index = 1;
+    int mcs_index = 0;
+    IsRTS=0;
 
     string keypair = "tx.key";
 
-    while ((opt = getopt(argc, argv, "K:k:n:u:r:p:B:G:S:L:M:")) != -1) {
+    while ((opt = getopt(argc, argv, "K:k:n:u:r:p:B:G:S:L:M:t:")) != -1) {
         switch (opt) {
         case 'K':
             keypair = optarg;
@@ -323,12 +349,15 @@ int main(int argc, char * const *argv)
         case 'M':
             mcs_index = atoi(optarg);
             break;
+        case 't':
+	        IsRTS = atoi(optarg);
+            break;
         default: /* '?' */
         show_usage:
-            fprintf(stderr, "Usage: %s [-K tx_key] [-k RS_K] [-n RS_N] [-u udp_port] [-p radio_port] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] interface1 [interface2] ...\n",
+            fprintf(stderr, "Usage: %s [-K tx_key] [-k RS_K] [-n RS_N] [-u udp_port] [-p radio_port] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] [-t IsRTS] interface1 [interface2] ...\n",
                     argv[0]);
-            fprintf(stderr, "Default: K='%s', k=%d, n=%d, udp_port=%d, radio_port=%d bandwidth=%d guard_interval=%s stbc=%d ldpc=%d mcs_index=%d\n",
-                    keypair.c_str(), k, n, udp_port, radio_port, bandwidth, short_gi ? "short" : "long", stbc, ldpc, mcs_index);
+            fprintf(stderr, "Default: K='%s', k=%d, n=%d, udp_port=%d, radio_port=%d bandwidth=%d guard_interval=%s stbc=%d ldpc=%d mcs_index=%d\n IsRTS=%d\n",
+                    keypair.c_str(), k, n, udp_port, radio_port, bandwidth, short_gi ? "short" : "long", stbc, ldpc, mcs_index, IsRTS);
             fprintf(stderr, "Radio MTU: %lu\n", (unsigned long)MAX_PAYLOAD_SIZE);
             fprintf(stderr, "WFB version " WFB_VERSION "\n");
             exit(1);
