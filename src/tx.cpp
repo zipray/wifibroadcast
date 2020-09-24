@@ -40,6 +40,7 @@ extern "C"
 #include "wifibroadcast.hpp"
 #include "tx.hpp"
 int IsRTS;
+using namespace std;
 
 Transmitter::Transmitter(int k, int n, const string &keypair):  fec_k(k), fec_n(n), block_idx(0),
                                                                 fragment_idx(0),
@@ -58,8 +59,16 @@ Transmitter::Transmitter(int k, int n, const string &keypair):  fec_k(k), fec_n(
     {
         throw runtime_error(string_format("Unable to open %s: %s", keypair.c_str(), strerror(errno)));
     }
-    if (fread(tx_secretkey, crypto_box_SECRETKEYBYTES, 1, fp) != 1) throw runtime_error(string_format("Unable to read tx secret key: %s", strerror(errno)));
-    if (fread(rx_publickey, crypto_box_PUBLICKEYBYTES, 1, fp) != 1) throw runtime_error(string_format("Unable to read rx public key: %s", strerror(errno)));
+    if (fread(tx_secretkey, crypto_box_SECRETKEYBYTES, 1, fp) != 1)
+    {
+        fclose(fp);
+        throw runtime_error(string_format("Unable to read tx secret key: %s", strerror(errno)));
+    }
+    if (fread(rx_publickey, crypto_box_PUBLICKEYBYTES, 1, fp) != 1)
+    {
+        fclose(fp);
+        throw runtime_error(string_format("Unable to read rx public key: %s", strerror(errno)));
+    }
     fclose(fp);
 
     make_session_key();
@@ -121,10 +130,11 @@ void PcapTransmitter::inject_packet(const uint8_t *buf, size_t size)
     uint8_t *p = txbuf;
 
     assert(size <= MAX_FORWARDER_PACKET_SIZE);
+
     // radiotap header
     memcpy(p, radiotap_header, sizeof(radiotap_header));
     p += sizeof(radiotap_header);
-	
+
     // ieee80211 header
     if(IsRTS == 0)
     {
@@ -315,7 +325,7 @@ int main(int argc, char * const *argv)
     int mcs_index = 0;
     IsRTS=0;
 
-    string keypair = "tx.key";
+    string keypair = "drone.key";
 
     while ((opt = getopt(argc, argv, "K:k:n:u:r:p:B:G:S:L:M:t:")) != -1) {
         switch (opt) {
@@ -354,7 +364,7 @@ int main(int argc, char * const *argv)
             break;
         default: /* '?' */
         show_usage:
-            fprintf(stderr, "Usage: %s [-K tx_key] [-k RS_K] [-n RS_N] [-u udp_port] [-p radio_port] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] [-t IsRTS] interface1 [interface2] ...\n",
+            fprintf(stderr, "Usage: %s [-K drone_key] [-k RS_K] [-n RS_N] [-u udp_port] [-p radio_port] [-B bandwidth] [-G guard_interval] [-S stbc] [-L ldpc] [-M mcs_index] [-t IsRTS] interface1 [interface2] ...\n",
                     argv[0]);
             fprintf(stderr, "Default: K='%s', k=%d, n=%d, udp_port=%d, radio_port=%d bandwidth=%d guard_interval=%s stbc=%d ldpc=%d mcs_index=%d\n IsRTS=%d\n",
                     keypair.c_str(), k, n, udp_port, radio_port, bandwidth, short_gi ? "short" : "long", stbc, ldpc, mcs_index, IsRTS);

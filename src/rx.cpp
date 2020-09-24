@@ -45,7 +45,10 @@ extern "C"
 #include "wifibroadcast.hpp"
 #include "rx.hpp"
 
-uint8_t radio_port = 23;
+using namespace std;
+int log_interval = 1000;
+int bytes_written = 0;
+int wifi_adapter_cnt = 0;
 
 Receiver::Receiver(const char *wlan, int wlan_idx, int radio_port, BaseAggregator *agg) : wlan_idx(wlan_idx), agg(agg)
 {
@@ -96,9 +99,9 @@ Receiver::Receiver(const char *wlan, int wlan_idx, int radio_port, BaseAggregato
     pcap_freecode(&bpfprogram);
     fd = pcap_get_selectable_fd(ppcap);
 
-    if(radio_port == 23)
+    if (log_interval == 200)
     {
-        rx_status->wifi_adapter_cnt++;
+        wifi_adapter_cnt++;
     }
 }
 
@@ -238,8 +241,16 @@ Aggregator::Aggregator(const string &client_addr, int client_port, int k, int n,
     {
         throw runtime_error(string_format("Unable to open %s: %s", keypair.c_str(), strerror(errno)));
     }
-    if (fread(rx_secretkey, crypto_box_SECRETKEYBYTES, 1, fp) != 1) throw runtime_error(string_format("Unable to read rx secret key: %s", strerror(errno)));
-    if (fread(tx_publickey, crypto_box_PUBLICKEYBYTES, 1, fp) != 1) throw runtime_error(string_format("Unable to read tx public key: %s", strerror(errno)));
+    if (fread(rx_secretkey, crypto_box_SECRETKEYBYTES, 1, fp) != 1)
+    {
+        fclose(fp);
+        throw runtime_error(string_format("Unable to read rx secret key: %s", strerror(errno)));
+    }
+    if (fread(tx_publickey, crypto_box_PUBLICKEYBYTES, 1, fp) != 1)
+    {
+        fclose(fp);
+        throw runtime_error(string_format("Unable to read tx public key: %s", strerror(errno)));
+    }
     fclose(fp);
 }
 
@@ -357,35 +368,28 @@ void Aggregator::dump_stats(FILE *fp)
 {
     //timestamp in ms
     //uint64_t ts = get_time_ms();
-
-    for(antenna_stat_t::iterator it = antenna_stat.begin(); it != antenna_stat.end(); it++)
+    if (log_interval == 200)
     {
-	//fprintf(fp, "card: %d, rssi_avg: %d \n", it, it->second.rssi_sum / it->second.count_all);
+       for(antenna_stat_t::iterator it = antenna_stat.begin(); it != antenna_stat.end(); it++)
+       {
         //fprintf(fp, "%" PRIu64 "\tANT\t%" PRIx64 "\t%d:%d:%d:%d\n", ts, it->first, it->second.count_all, it->second.rssi_min, it->second.rssi_sum / it->second.count_all, it->second.rssi_max);
-        if(radio_port == 23)
-        {
-            rx_status->adapter[it->second.wlan_idx].current_signal_dbm = it->second.rssi_sum / it->second.count_all;
+
             rx_status->adapter[it->second.wlan_idx].signal_good = 1;
             rx_status->adapter[it->second.wlan_idx].received_packet_cnt += count_p_all;
-            //rx_status->adapter[it->second.wlan_idx].wrong_crc_cnt += count_p_dec_err;
-            //rx_status->adapter[it->second.wlan_idx].wrong_crc_cnt += count_p_bad;
+//          rx_status->adapter[it->second.wlan_idx].wrong_crc_cnt += count_p_bad;
         }
-    }
-
-    if(radio_port == 23)
-    {
-        rx_status->lost_per_block_cnt += 0;//count_p_bad;
-        rx_status->damaged_block_cnt += count_p_bad;
-        rx_status->damaged_block_cnt += count_p_dec_err; 
+//      rx_status->lost_per_block_cnt += count_p_fec_recovered;
+//      rx_status->damaged_block_cnt += count_p_bad;
+//		rx_status->received_block_cnt += count_p_all;
         rx_status->received_packet_cnt += count_p_all;
-        rx_status->received_block_cnt += count_p_all;
-        rx_status->lost_packet_cnt += count_p_lost;
+//      rx_status->lost_packet_cnt += count_p_lost;
+        rx_status->wifi_adapter_cnt = wifi_adapter_cnt;
+        rx_status->kbitrate = ((count_p_all * bytes_written * 8) / 1024) * 1000 / log_interval;		
     }
 
     antenna_stat.clear();
 
     //fprintf(fp, "%" PRIu64 "\tPKT\t%u:%u:%u:%u:%u:%u\n", ts, count_p_all, count_p_dec_err, count_p_dec_ok, count_p_fec_recovered, count_p_lost, count_p_bad);
-    //fprintf(fp, "count_p_all %d \n  count_p_dec_err %d \n count_p_dec_ok %d \n count_p_fec_recovered %d \n count_p_lost %d \n count_p_bad %d \n",  count_p_all, count_p_dec_err, count_p_dec_ok, count_p_fec_recovered, count_p_lost, count_p_bad);
     //fflush(fp);
 
     count_p_all = 0;
@@ -412,7 +416,6 @@ void Aggregator::log_rssi(const sockaddr_in *sockaddr, uint8_t wlan_idx, const u
 
         antenna_stat[key].log_rssi(rssi[i]);
         antenna_stat[key].wlan_idx = wlan_idx;
-	//fprintf(stderr, "antenna_stat[key].log_rssi(rssi[i]): rssi: %d wlan_idx: %d , i: %d \n", rssi[i], wlan_idx, i);
     }
 }
 
@@ -423,7 +426,7 @@ void Aggregator::process_packet(const uint8_t *buf, size_t size, uint8_t wlan_id
     count_p_all += 1;
 
     if(size == 0) return;
-
+    bytes_written = size;
     if (size > MAX_FORWARDER_PACKET_SIZE)
     {
         fprintf(stderr, "long packet (fec payload)\n");
@@ -770,15 +773,14 @@ void network_loop(int srv_port, Aggregator &agg, int log_interval)
 int main(int argc, char* const *argv)
 {
     int opt;
-    uint8_t k = 8, n = 12;
-    int log_interval = 200;
+    uint8_t k = 8, n = 12, radio_port = 1;
     int client_port = 5600;
     int srv_port = 0;
-    string client_addr = "127.0.0.1";
     rx_mode_t rx_mode = LOCAL;
-    string keypair = "rx.key";
+	string client_addr = "127.0.0.1";
+    string keypair = "gs.key";
 
-    while ((opt = getopt(argc, argv, "K:fa:k:n:c:u:p:l:")) != -1) {
+    while ((opt = getopt(argc, argv, "K:f:a:k:n:c:u:p:l:")) != -1) {
         switch (opt) {
         case 'K':
             keypair = optarg;
@@ -810,16 +812,16 @@ int main(int argc, char* const *argv)
             break;
         default: /* '?' */
         show_usage:
-            fprintf(stderr, "Local receiver: %s [-K rx_key] [-k RS_K] [-n RS_N] [-c client_addr] [-u client_port] [-p radio_port] [-l log_interval] interface1 [interface2] ...\n", argv[0]);
+            fprintf(stderr, "Local receiver: %s [-K gs_key] [-k RS_K] [-n RS_N] [-c client_addr] [-u client_port] [-p radio_port] [-l log_interval] interface1 [interface2] ...\n", argv[0]);
             fprintf(stderr, "Remote (forwarder): %s -f [-c client_addr] [-u client_port] [-p radio_port] interface1 [interface2] ...\n", argv[0]);
-            fprintf(stderr, "Remote (aggregator): %s -a server_port [-K rx_key] [-k RS_K] [-n RS_N] [-c client_addr] [-u client_port] [-l log_interval]\n", argv[0]);
+            fprintf(stderr, "Remote (aggregator): %s -a server_port [-K gs_key] [-k RS_K] [-n RS_N] [-c client_addr] [-u client_port] [-l log_interval]\n", argv[0]);
             fprintf(stderr, "Default: K='%s', k=%d, n=%d, connect=%s:%d, radio_port=%d, log_interval=%d\n", keypair.c_str(), k, n, client_addr.c_str(), client_port, radio_port, log_interval);
             fprintf(stderr, "WFB version " WFB_VERSION "\n");
             exit(1);
         }
     }
 
-    if(radio_port == 23)
+    if (log_interval == 200)
     {
         rx_status = status_memory_open();
 
@@ -829,7 +831,7 @@ int main(int argc, char* const *argv)
         rx_status->damaged_block_cnt = 0;
         rx_status->received_packet_cnt = 0;
         rx_status->lost_packet_cnt = 0;
-	    rx_status->lost_per_block_cnt;
+	    rx_status->lost_per_block_cnt = 0;
         rx_status->kbitrate = 0;
 
         for(int g=0; g<MAX_PENUMBRA_INTERFACES; ++g)
