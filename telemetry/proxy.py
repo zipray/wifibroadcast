@@ -58,9 +58,9 @@ class UDPProxyProtocol(DatagramProtocol):
 
     def flush_queue(self):
         if self.agg_queue_size > 0:
-            if self.agg_queue_timer is not None:
-                if not self.agg_queue_timer.called:
-                    self.agg_queue_timer.cancel()
+            if self.agg_queue_timer is not None \
+               and not self.agg_queue_timer.called:
+                self.agg_queue_timer.cancel()
             self.agg_queue_timer = None
             self._send_to_peer(b''.join(self.agg_queue))
             self.agg_queue = []
@@ -82,7 +82,7 @@ class UDPProxyProtocol(DatagramProtocol):
         self.reply_addr = addr
 
         # send message to local transport
-        if self.agg_max_size is None:
+        if self.agg_max_size is None or self.agg_timeout is None:
             return self._send_to_peer(data)
 
         if len(data) > self.agg_max_size:
