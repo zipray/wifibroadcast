@@ -370,13 +370,19 @@ void Aggregator::dump_stats(FILE *fp)
     //uint64_t ts = get_time_ms();
     if (log_interval == 200)
     {
-       for(antenna_stat_t::iterator it = antenna_stat.begin(); it != antenna_stat.end(); it++)
-       {
+		int packetcounter[4];
+        int packetcounter_last[4];
+        for(antenna_stat_t::iterator it = antenna_stat.begin(); it != antenna_stat.end(); it++)
+        {
         //fprintf(fp, "%" PRIu64 "\tANT\t%" PRIx64 "\t%d:%d:%d:%d\n", ts, it->first, it->second.count_all, it->second.rssi_min, it->second.rssi_sum / it->second.count_all, it->second.rssi_max);
-
-            rx_status->adapter[it->second.wlan_idx].signal_good = 1;
-            rx_status->adapter[it->second.wlan_idx].received_packet_cnt += count_p_all;
-//          rx_status->adapter[it->second.wlan_idx].wrong_crc_cnt += count_p_bad;
+			rx_status->adapter[it->second.wlan_idx].received_packet_cnt += it->second.count_all;
+            packetcounter_last[it->second.wlan_idx] = packetcounter[it->second.wlan_idx];
+			packetcounter[it->second.wlan_idx] = rx_status->adapter[it->second.wlan_idx].received_packet_cnt;
+			if (packetcounter[it->second.wlan_idx] == packetcounter_last[it->second.wlan_idx]) {
+			    rx_status->adapter[it->second.wlan_idx].signal_good = 0;
+			} else {
+			    rx_status->adapter[it->second.wlan_idx].signal_good = 1;				
+			}
         }
 //      rx_status->lost_per_block_cnt += count_p_fec_recovered;
 //      rx_status->damaged_block_cnt += count_p_bad;
@@ -424,7 +430,7 @@ void Aggregator::process_packet(const uint8_t *buf, size_t size, uint8_t wlan_id
 {
     uint8_t new_session_key[sizeof(session_key)];
     count_p_all += 1;
-
+	
     if(size == 0) return;
     bytes_written = size;
     if (size > MAX_FORWARDER_PACKET_SIZE)
